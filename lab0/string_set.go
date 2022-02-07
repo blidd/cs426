@@ -1,5 +1,12 @@
 package string_set
 
+import (
+	//"fmt"
+	"regexp"
+	"strings"
+	"sync"
+)
+
 type StringSet interface {
 	// Add string s to the StringSet and return whether the string was inserted
 	// in the set.
@@ -14,20 +21,48 @@ type StringSet interface {
 }
 
 type LockedStringSet struct {
+	items map[string]bool
+	sync.RWMutex
 }
 
 func MakeLockedStringSet() LockedStringSet {
-	return LockedStringSet{}
+	return LockedStringSet{
+		items: make(map[string]bool),
+	}
 }
 
 func (stringSet *LockedStringSet) Add(key string) bool {
-	return false
+	stringSet.Lock()
+	defer stringSet.Unlock()
+	if stringSet.items[key] {
+		return false
+	} else {
+		stringSet.items[key] = true
+		return true
+	}
 }
 
 func (stringSet *LockedStringSet) Count() int {
-	return 0
+	var size int
+	stringSet.RLock()
+	size = len(stringSet.items)
+	stringSet.RUnlock()
+	return size
 }
 
 func (stringSet *LockedStringSet) PredRange(begin string, end string, pattern string) []string {
-	return make([]string, 0)
+	matches := make([]string, 0)
+
+	stringSet.RLock()
+	defer stringSet.RUnlock()
+	for word, _ := range stringSet.items {
+		//fmt.Println("the word: ", word)
+		if strings.Compare(begin, word) <= 0 && strings.Compare(end, word) >= 0 { // check range
+			//fmt.Println("inside range: ", word)
+			if matched, _ := regexp.MatchString(pattern, word); matched { // check regexp match
+				matches = append(matches, word)
+			}
+		}
+	}
+	return matches
 }
