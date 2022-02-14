@@ -217,6 +217,7 @@ func BenchmarkLockedStringSet(b *testing.B) {
 
 func BenchmarkStripedStringSet(b *testing.B) {
 	stripeCounts := []int{1, 2, runtime.NumCPU(), runtime.NumCPU() * 2, runtime.NumCPU() * 8}
+	fmt.Println(stripeCounts)
 	for _, count := range stripeCounts {
 		b.Run(fmt.Sprintf("adds/stripes=%d", count), func(b *testing.B) {
 			set := MakeStripedStringSet(count)

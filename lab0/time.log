@@ -1,0 +1,28 @@
+ESTIMATE of time to complete assignment: 10 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+2/02   6:00pm  1:00  read spec, background research.
+2/04  10:30am  1:00  implement LockedStringSet
+2/05  12:00pm  1:00  implement StripedStringSet
+2/05   4:00pm  2:00  implement PredRange
+2/09   4:00pm  2:00  generating graph, writing discussions, clean up
+               ----
+               7:00  TOTAL time spent
+
+I discussed my solution with: Tony Xu, Seun Omonije
+
+The hardest part of the problem set for me was the parallelization of
+PredRange scans for StripedStringSet. I was having a bit of a hard time
+deciding what concurrency tools to use. I initially considered using
+WaitGroups, however that would require using buffered channels because
+if the channel was unbuffered, the main thread would need to wait on
+the channel and not the goroutines in the WaitGroup. Using buffered
+channels is an issue because I don't know how many matches we will find
+in the set. An upper bound would be the size of the entire set, but
+that seemed like a lot of unnecessary overhead. So I ended up waiting
+on an unbuffered channel in the main thread and having the parallelized
+goroutines send a message into the channel after they finish scanning
+their respective stripes. Once the main thread receives the "done"
+message from each goroutine, it can return a list of all matches.

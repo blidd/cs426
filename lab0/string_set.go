@@ -56,9 +56,7 @@ func (stringSet *LockedStringSet) PredRange(begin string, end string, pattern st
 	stringSet.RLock()
 	defer stringSet.RUnlock()
 	for word, _ := range stringSet.items {
-		//fmt.Println("the word: ", word)
 		if strings.Compare(begin, word) <= 0 && strings.Compare(end, word) >= 0 { // check range
-			//fmt.Println("inside range: ", word)
 			if matched, _ := regexp.MatchString(pattern, word); matched { // check regexp match
 				matches = append(matches, word)
 			}

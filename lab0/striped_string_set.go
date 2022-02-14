@@ -41,17 +41,12 @@ func (stringSet *StripedStringSet) Count() int {
 }
 
 func (stringSet *StripedStringSet) PredRange(begin string, end string, pattern string) []string {
-
-	//var wg sync.WaitGroup
 	ch := make(chan string)
 	defer close(ch)
 
 	for _, stripe := range stringSet.stripes {
-		//wg.Add(1)
 		go func(stripe *LockedStringSet) {
-			//defer wg.Done()
 			matches := stripe.PredRange(begin, end, pattern)
-			//fmt.Println(matches)
 			for _, word := range matches {
 				ch <- word
 			}

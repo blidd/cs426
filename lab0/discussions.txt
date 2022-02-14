@@ -1,0 +1,44 @@
+B2
+
+1. iterate through the entire set across all stripes each time a count is needed
+This approach is the very straightforward; we simply sum together the number of elements in each stripe. Each count
+operation would run in O(n) time, where n is the number of elements in the set. Such an approach is perfectly suitable
+if we do not expect to run the count operation frequently. However, one count operation needs to acquire the lock for
+every stripe, which could present a significant bottleneck if we need to frequently count the number of elements in the
+striped set.
+
+2. keep a per-stripe counter and add up counters from every stripe when queried
+Approach #2 is similar to Approach #1, except that #2 amortizes the counting operations across each Add() operation
+by keeping a counter for each stripe and incrementing the counter each time we add an element to that stripe. This
+counting approach would run in O(stripeCount) time, which is nice if the number of stripes is low, and requires a
+trivial amount of additional memory. However, to retrieve the count values from each stripe, we would still need to
+acquire each lock to ensure that the count value doesn't change while we are attempting to read it.
+
+3. keep a global (i.e., one single) counter that gets updated when a string is added (atomic counters)
+Using atomic counters is a simple solution that ensures the load, increment, and store operations to the global counter
+variable occur together and cannot be preempted. This means we can just atomically increment the global counter each
+time we add a string to the set, which works great if the set only sporadically receives Add() function calls and sees
+Count() calls much more frequently. However, if we were to add a whole bunch of strings to the set (regardless of which
+bucket each string would go into) at once, we would likely encounter a bottleneck as the add operations wait for each
+other to finish incrementing the counter. The advantage is that Count() calls are very simple and quick.
+
+ExtraCredit1
+
+Count() could return anywhere between x and x + N, depending on how the goroutines are interleaved.
+For approach #2: In the extreme case, the Count() operation counts the number of strings in each stripe after its Add()
+call occurs, which results in a count of x + N. In the other extreme case, the counts of each stripe occur before their
+corresponding add calls, resulting in a count of x. For approach #1, because the set is striped, we still have to call
+the lock on each stripe when counting so we may see a higher or lower count on that stripe depending on if the Add()
+operation occurs before or after the count call, respectively. So effectively the same issue as approach #2.
+Approach #3 is slightly different; it entirely depends on how thread 0's Count() call is interleaved with the Add()
+calls. If Count() is called after 1 Add() call, then count = x + 1, etc. Therefore I would define the correct count as
+bounded between x and x + N, where x is the number of unique strings when Count() is first called and N is the number of
+distinct strings waiting to be added at the time x was called (assuming that no more Add() calls occur).
+
+C3
+
+I ran the scans:serial benchmark for LockedStringSet and StripedStringSet with 2 stripes. I observed that the
+StripedStringSet was about twice as fast as the LockedStringSet at running sequential scans, at 2392257 ns/op and
+4558732 ns/op respectively. For the StripedStringSet, if the hash function evenly divides the strings into two stripes,
+then the set can effectively double its scanning speed by scanning the two strips in parallel. In contrast,
+LockedStringSet uses one goroutine to sequentially scan the whole set when PredRange() is called.
