@@ -54,6 +54,12 @@ Your first job will be to implement a single RPC method for VideoRecService: `Ge
 
 The overall strategy for the video recommending service will be to look at videos all the videos their subscribed-to-users have liked and rank them according to some properties (these will be wrapped as opaque coefficients, and the "ranking" algorithm is provided in the `ranker` library). To do this, the video recommending service will need to combine results from two different backends: the UserService (for fetching subscriptions and liked videos) and VideoService (for fetching video data). Both UserService and VideoService are also gRPC microservices, so VideoRecService will be using gRPC clients to communicate.
 
+The overall architecture diagram is the following:
+![architecture diagram](./architecture_diagram.png)
+(N.B. you will be implementing the VideoRecService __server__ logic by creating and __using__ the UserService and VideoService __clients__.)
+
+[This diagram](./interactions.png) shows the overall flow and logic of the VideoRecService you'll be implementing. Note that you might need to send multiple requests for each arrow in the diagram.
+
 We've provided you with skeleton code in `video_rec_service/server/server.go` and the accompanying server library `video_rec_service/server_lib/server_lib.go`. To try it out, `go run video_rec_service/server/server.go`. This code will start up and run the gRPC server on a given port (default `8080`) for you.
 
 
@@ -82,7 +88,7 @@ The request starts for a given user based on `user_id`. You will use the `UserSe
 
 To communicate with the `UserService` you'll need to create a gRPC client. We'll start with the basics, following the Go gRPC guide: https://grpc.io/docs/languages/go/basics/#client
 
-`grpc.Dial()` creates a "channel" (in this case, a network stream channel, not a Go built-in `chan`) which allows us to communicate with a server. Use this to create a channel to `UserService`, which you will use in **A3**. For the server address, use the global `userServiceAddr` which can be set from a configurable flag to your service.
+`grpc.Dial()` creates a "channel" (in this case, a network stream channel, not a Go built-in `chan`) which allows us to communicate with a server. Use this to create a channel to `UserService`, which you will use in **A3**. For the server address, use the `server.options.UserServiceAddr` which can be set from options passed to your service "constructor" (i.e., `MakeVideoRecServiceServer(options)`). (Note the `DefaultVideoRecServiceOptions()` is only there for convenience in tests; your server should use the values in its member variable, i.e., `server.options`.)
 
 Note: for this lab, we are not using TLS, but `grpc.Dial()` does expect transport credentials:
 ```
@@ -182,11 +188,13 @@ Since the bulk of the application logic goes into the server_lib of VideoRecServ
  - In `server_test.go`, add unittest skeleton code following the Golang testing tutorials such as [this](https://go.dev/doc/tutorial/add-a-test) and [this](https://pkg.go.dev/testing);
  - In each unittest, spin up a `VideoRecServiceServer` by calling `MakeVideoRecServiceServerWithMocks` with the desired options.
 
-By the end of this lab, you should add at least 5 unit tests. Your tests should have coverage (i.e., at least part of one unit test) on the basic functionality, batching, stats, error handing, retrying, fallback to trending videos. You of course are welcome to add more tests than just 5.
+By the end of this lab, you should add at least 5 unit tests. Your tests should have coverage (i.e., at least part of one unit test) on the basic functionality, batching, stats, error handing, retrying, fallback to trending videos. You of course are welcome to add more tests than just 5. You must include at least some end-to-end tests (i.e., testing `GetTopVideos`), but we encourage you to include unittests of any nontrivial functionality of your `VideoRecService`.
 
 `go test -run='.*' -v` should pass on your implementation as well as our private reference implementation. (**Extra credit** will be given to tests that caught bugs in our reference implementation.)
 
 Note: your actual server **must** be able to communicate with the user|video services via grpc and not solely rely on the mock clients. When we grade the server binary, we will use different undisclosed random seeds for user|video services that your video recommendation server is unaware of; an attempt to use the mock clients to avoid implementing more complex logic such as error handling will be considered cheating.
+
+Note: The failure injection config is shared per-process, i.e., in your unittest, `MockUserServiceClient` and `MockVideoServiceClient` share their failure injection config.
 
 #### A8. Batching
 
