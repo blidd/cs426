@@ -74,7 +74,7 @@ func fetchUser(userId uint64) {
 }
 
 func sendSingleTestRequest(userId uint64, client pb.VideoRecServiceClient) []*vpb.VideoInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 
 	out, err := client.GetTopVideos(
