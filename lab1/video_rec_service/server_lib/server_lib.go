@@ -64,7 +64,6 @@ type VideoRecServiceServer struct {
 	pb.UnimplementedVideoRecServiceServer
 	Options            VideoRecServiceOptions
 	Stats              VideoRecServiceStats
-	StatsChannels      VideoRecServiceStatsChannels
 	userServiceConn    *grpc.ClientConn
 	userServiceClient  UserServiceInterface
 	videoServiceConn   *grpc.ClientConn
@@ -73,6 +72,7 @@ type VideoRecServiceServer struct {
 }
 
 type VideoRecServiceStats struct {
+	sync.RWMutex
 	TotalRequests     uint64
 	TotalErrors       uint64
 	ActiveRequests    uint64
@@ -80,17 +80,6 @@ type VideoRecServiceStats struct {
 	AverageLatencyMs  float32
 	UserServerErrors  uint64
 	VideoServerErrors uint64
-}
-
-type VideoRecServiceStatsChannels struct {
-	TotalRequestsChannel     chan uint64
-	TotalErrorsChannel       chan uint64
-	ActiveRequestsChannel    chan int
-	TotalLatencyMsChannel    chan uint64
-	UserServerErrorsChannel  chan uint64
-	VideoServerErrorsChannel chan uint64
-	RequestStatsChannel      chan int
-	ReceiveStatsChannel      chan VideoRecServiceStats
 }
 
 type TrendingVideosCache struct {
@@ -121,21 +110,9 @@ func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceS
 	// video service RPC client
 	videoClient := vpb.NewVideoServiceClient(videoConn)
 
-	statsChan := VideoRecServiceStatsChannels{
-		TotalRequestsChannel:     make(chan uint64),
-		TotalErrorsChannel:       make(chan uint64),
-		ActiveRequestsChannel:    make(chan int),
-		TotalLatencyMsChannel:    make(chan uint64),
-		UserServerErrorsChannel:  make(chan uint64),
-		VideoServerErrorsChannel: make(chan uint64),
-		RequestStatsChannel:      make(chan int),
-		ReceiveStatsChannel:      make(chan VideoRecServiceStats),
-	}
-
 	return &VideoRecServiceServer{
 		Options:            options,
-		Stats:              VideoRecServiceStats{},
-		StatsChannels:      statsChan,
+		Stats:              VideoRecServiceStats{TotalRequests: 1},
 		userServiceConn:    userConn,
 		userServiceClient:  userClient,
 		videoServiceConn:   videoConn,
@@ -162,27 +139,6 @@ func MakeVideoRecServiceServerWithMocks(
 	}
 }
 
-// func GetUserWithRetry(
-// 	ctx context.Context,
-// 	req *upb.GetUserRequest,
-// 	backoff int,
-// 	numRetries int,
-// 	_ ...grpc.CallOption,
-// ) (*upb.GetUserResponse, error) {
-
-// 	var err error
-// 	var resp interface{}
-// 	for err != nil && numRetries > 0 {
-// 		resp, err = fn(ctx, req)
-// 		numRetries--
-// 		fmt.Printf("%v", resp)
-// 	}
-// 	if err != nil { // if there is still an error, return error
-// 		log.Printf("RPC call failed after %v retries. Fallback...\n", numRetries)
-// 	}
-// 	return nil, nil
-// }
-
 // wrap video info with rank
 type RankedVideo struct {
 	videoInfo *vpb.VideoInfo
@@ -199,19 +155,20 @@ func (server *VideoRecServiceServer) GetTopVideos(
 	ctx context.Context,
 	req *pb.GetTopVideosRequest,
 ) (*pb.GetTopVideosResponse, error) {
+	server.Stats.Lock()
+	defer server.Stats.Unlock()
 
-	server.StatsChannels.TotalRequestsChannel <- 1
-	// increment active requests
-	server.StatsChannels.ActiveRequestsChannel <- 1
-	// time GetTopVideos()
+	server.Stats.TotalRequests++
+	server.Stats.ActiveRequests++ // increment active requests
+
 	start := time.Now()
 	resp, err := server._GetTopVideos(ctx, req)
 	end := time.Now()
-	server.StatsChannels.TotalLatencyMsChannel <- uint64(end.Sub(start).Milliseconds())
-	// decrement active requests
-	server.StatsChannels.ActiveRequestsChannel <- -1
+	server.Stats.TotalLatencyMs += uint64(end.Sub(start).Milliseconds())
+
+	server.Stats.ActiveRequests-- // decrement active requests
 	if err != nil {
-		server.StatsChannels.TotalErrorsChannel <- 1
+		server.Stats.TotalErrors++
 	}
 	return resp, err
 }
@@ -224,13 +181,14 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 	userResp, err := server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
 	if err != nil {
 		// TODO: handle error
-		fmt.Printf("GetUser failed. Retrying...\n")
-		server.StatsChannels.UserServerErrorsChannel <- 1
-		userResp, err = server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
-		if err != nil {
-			fmt.Printf("GetUser failed twice.\n")
-			return nil, err
-		}
+		fmt.Printf("GetUser failed. Retrying... 1 %v\n", err)
+		server.Stats.UserServerErrors++
+		// userResp, err = server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
+		// if err != nil {
+		// 	fmt.Printf("GetUser failed twice.\n")
+		// 	return nil, err
+		// }
+		return nil, err
 	}
 	subscribedTo := userResp.Users[0].GetSubscribedTo()
 
@@ -247,13 +205,14 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		subResp, err := server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
 		if err != nil {
 			// TODO: handle error
-			fmt.Printf("GetUser failed. Retrying...\n")
-			server.StatsChannels.UserServerErrorsChannel <- 1
-			subResp, err = server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
-			if err != nil {
-				fmt.Printf("GetUser failed twice.\n")
-				return nil, err
-			}
+			fmt.Printf("GetUser failed. Retrying... 2\n")
+			server.Stats.UserServerErrors++
+			// subResp, err = server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
+			// if err != nil {
+			// 	fmt.Printf("GetUser failed twice.\n")
+			// 	return nil, err
+			// }
+			return nil, err
 		}
 		userInfos = append(userInfos, subResp.GetUsers()...)
 		beg += server.Options.MaxBatchSize
@@ -290,7 +249,7 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		if err != nil {
 			// TODO: handle error
 			fmt.Printf("GetVideo failed. Retrying...\n")
-			server.StatsChannels.UserServerErrorsChannel <- 1
+			server.Stats.UserServerErrors++
 			videoResp, err = server.videoServiceClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: batch})
 			if err != nil {
 				fmt.Printf("GetVideo failed twice.\n")
@@ -334,15 +293,15 @@ func (server *VideoRecServiceServer) GetStats(
 	ctx context.Context,
 	req *pb.GetStatsRequest,
 ) (*pb.GetStatsResponse, error) {
-	server.StatsChannels.RequestStatsChannel <- 1
-	stats := <-server.StatsChannels.ReceiveStatsChannel
+	server.Stats.RLock()
+	defer server.Stats.RUnlock()
 	return &pb.GetStatsResponse{
-		TotalRequests:      stats.TotalRequests,
-		TotalErrors:        stats.TotalErrors,
-		ActiveRequests:     stats.ActiveRequests,
-		UserServiceErrors:  stats.UserServerErrors,
-		VideoServiceErrors: stats.VideoServerErrors,
-		AverageLatencyMs:   stats.AverageLatencyMs,
+		TotalRequests:      server.Stats.TotalRequests,
+		TotalErrors:        server.Stats.TotalErrors,
+		ActiveRequests:     server.Stats.ActiveRequests,
+		UserServiceErrors:  server.Stats.UserServerErrors,
+		VideoServiceErrors: server.Stats.VideoServerErrors,
+		AverageLatencyMs:   float32(server.Stats.TotalLatencyMs / server.Stats.TotalRequests),
 	}, nil
 }
 
@@ -378,7 +337,7 @@ func (server *VideoRecServiceServer) FetchTrendingVideos() error {
 		if err != nil {
 			// TODO: handle error
 			fmt.Printf("GetVideo failed. Retrying...\n")
-			server.StatsChannels.UserServerErrorsChannel <- 1
+			server.Stats.UserServerErrors++
 			videoResp, err = server.videoServiceClient.GetVideo(context.Background(), &vpb.GetVideoRequest{VideoIds: batch})
 			if err != nil {
 				fmt.Printf("GetVideo failed twice.\n")

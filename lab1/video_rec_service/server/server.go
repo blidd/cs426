@@ -51,25 +51,6 @@ func main() {
 		DisableFallback:  true,
 	})
 
-	// goroutine to handle stat updates and requests for stats
-	go func() {
-		for {
-			select {
-			case <-server.StatsChannels.TotalRequestsChannel:
-				server.Stats.TotalRequests++
-			case <-server.StatsChannels.TotalErrorsChannel:
-				server.Stats.TotalErrors++
-			case update := <-server.StatsChannels.ActiveRequestsChannel:
-				server.Stats.ActiveRequests += uint64(update)
-			case latency := <-server.StatsChannels.TotalLatencyMsChannel:
-				server.Stats.TotalLatencyMs += latency
-				server.Stats.AverageLatencyMs = float32(server.Stats.TotalLatencyMs / server.Stats.TotalRequests)
-			case <-server.StatsChannels.RequestStatsChannel:
-				server.StatsChannels.ReceiveStatsChannel <- server.Stats
-			}
-		}
-	}()
-
 	if !server.Options.DisableFallback {
 		// goroutine to periodically cache trending videos
 		go func() {
