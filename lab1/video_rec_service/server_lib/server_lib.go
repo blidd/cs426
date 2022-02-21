@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"cs426.yale.edu/lab1/ranker"
 	umc "cs426.yale.edu/lab1/user_service/mock_client"
@@ -15,7 +17,6 @@ import (
 	pb "cs426.yale.edu/lab1/video_rec_service/proto"
 	vmc "cs426.yale.edu/lab1/video_service/mock_client"
 	vpb "cs426.yale.edu/lab1/video_service/proto"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type VideoRecServiceOptions struct {
@@ -62,11 +63,11 @@ type VideoServiceInterface interface {
 
 type VideoRecServiceServer struct {
 	pb.UnimplementedVideoRecServiceServer
-	Options            VideoRecServiceOptions
-	Stats              VideoRecServiceStats
-	userServiceConn    *grpc.ClientConn
-	userServiceClient  UserServiceInterface
-	videoServiceConn   *grpc.ClientConn
+	Options VideoRecServiceOptions
+	Stats   VideoRecServiceStats
+	// userServiceConn    *grpc.ClientConn
+	userServiceClient UserServiceInterface
+	// videoServiceConn   *grpc.ClientConn
 	videoServiceClient VideoServiceInterface
 	trendingVideos     TrendingVideosCache
 }
@@ -89,34 +90,10 @@ type TrendingVideosCache struct {
 }
 
 func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceServer {
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-
-	userConn, err := grpc.Dial(options.UserServiceAddr, opts...)
-	if err != nil {
-		// TODO: handle error
-		fmt.Printf("grpc dial failed")
-		return nil
-	}
-	// user service RPC client
-	userClient := upb.NewUserServiceClient(userConn)
-
-	videoConn, err := grpc.Dial(options.VideoServiceAddr, opts...)
-	if err != nil {
-		// TODO: handle error
-		fmt.Printf("grpc dial for video service failed")
-		return nil
-	}
-	// video service RPC client
-	videoClient := vpb.NewVideoServiceClient(videoConn)
 
 	return &VideoRecServiceServer{
-		Options:            options,
-		Stats:              VideoRecServiceStats{TotalRequests: 1},
-		userServiceConn:    userConn,
-		userServiceClient:  userClient,
-		videoServiceConn:   videoConn,
-		videoServiceClient: videoClient,
+		Options: options,
+		Stats:   VideoRecServiceStats{TotalRequests: 1},
 		trendingVideos: TrendingVideosCache{
 			videos: make([]*vpb.VideoInfo, 0),
 			timer:  time.NewTicker(time.Nanosecond),
@@ -132,9 +109,7 @@ func MakeVideoRecServiceServerWithMocks(
 	// Implement your own logic here
 	return &VideoRecServiceServer{
 		Options:            options,
-		userServiceConn:    nil,
 		userServiceClient:  mockUserServiceClient,
-		videoServiceConn:   nil,
 		videoServiceClient: mockVideoServiceClient,
 	}
 }
@@ -155,30 +130,59 @@ func (server *VideoRecServiceServer) GetTopVideos(
 	ctx context.Context,
 	req *pb.GetTopVideosRequest,
 ) (*pb.GetTopVideosResponse, error) {
-	server.Stats.Lock()
-	defer server.Stats.Unlock()
 
-	server.Stats.TotalRequests++
-	server.Stats.ActiveRequests++ // increment active requests
+	var opts []grpc.DialOption
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	var userServiceClient upb.UserServiceClient
+	var videoServiceClient vpb.VideoServiceClient
+	if server.userServiceClient == nil && server.videoServiceClient == nil {
+		userConn, err := grpc.Dial(server.Options.UserServiceAddr, opts...)
+		if err != nil {
+			// TODO: handle error
+			fmt.Printf("grpc dial failed")
+			return nil, err
+		}
+		defer userConn.Close()
+		// user service RPC client
+		userServiceClient = upb.NewUserServiceClient(userConn)
+
+		videoConn, err := grpc.Dial(server.Options.VideoServiceAddr, opts...)
+		if err != nil {
+			// TODO: handle error
+			fmt.Printf("grpc dial for video service failed")
+			return nil, err
+		}
+		defer videoConn.Close()
+		// video service RPC client
+		videoServiceClient = vpb.NewVideoServiceClient(videoConn)
+	}
+
+	atomic.AddUint64(&server.Stats.TotalRequests, 1)
+	atomic.AddUint64(&server.Stats.ActiveRequests, 1) // increment active requests
 
 	start := time.Now()
-	resp, err := server._GetTopVideos(ctx, req)
+	resp, err := server._GetTopVideos(ctx, req, userServiceClient, videoServiceClient)
 	end := time.Now()
-	server.Stats.TotalLatencyMs += uint64(end.Sub(start).Milliseconds())
+	atomic.AddUint64(&server.Stats.TotalLatencyMs, uint64(end.Sub(start).Milliseconds()))
 
-	server.Stats.ActiveRequests-- // decrement active requests
+	atomic.AddUint64(&server.Stats.ActiveRequests, ^uint64(0)) // decrement active requests
 	if err != nil {
-		server.Stats.TotalErrors++
+		atomic.AddUint64(&server.Stats.TotalErrors, 1)
 	}
+
 	return resp, err
 }
 
 func (server *VideoRecServiceServer) _GetTopVideos(
 	ctx context.Context,
 	req *pb.GetTopVideosRequest,
+	userServiceClient upb.UserServiceClient,
+	videoServiceClient vpb.VideoServiceClient,
 ) (*pb.GetTopVideosResponse, error) {
+
 	// get user info
-	userResp, err := server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
+	userResp, err := userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
 	if err != nil {
 		// TODO: handle error
 		fmt.Printf("GetUser failed. Retrying... 1 %v\n", err)
@@ -202,7 +206,7 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 			end = len(subscribedTo)
 		}
 		batch := subscribedTo[beg:end]
-		subResp, err := server.userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
+		subResp, err := userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
 		if err != nil {
 			// TODO: handle error
 			fmt.Printf("GetUser failed. Retrying... 2\n")
@@ -245,7 +249,7 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		}
 		batch := videoIds[beg:end]
 		// get liked videos info
-		videoResp, err := server.videoServiceClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: batch})
+		videoResp, err := videoServiceClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: batch})
 		if err != nil {
 			// TODO: handle error
 			fmt.Printf("GetVideo failed. Retrying...\n")

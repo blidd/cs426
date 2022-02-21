@@ -48,23 +48,22 @@ func main() {
 		UserServiceAddr:  *userServiceAddr,
 		VideoServiceAddr: *videoServiceAddr,
 		MaxBatchSize:     *maxBatchSize,
-		DisableFallback:  true,
 	})
 
-	if !server.Options.DisableFallback {
-		// goroutine to periodically cache trending videos
-		go func() {
-			for {
-				<-server.GetTrendingVideosTimer().C
-				err := server.FetchTrendingVideos() // refresh trending vids, replaces old timer
-				fmt.Printf("%v\n", server.GetTrendingVideosCache())
-				if err != nil {
-					// retry
-					fmt.Printf("hello")
-				}
-			}
-		}()
-	}
+	// if !server.Options.DisableFallback {
+	// 	// goroutine to periodically cache trending videos
+	// 	go func() {
+	// 		for {
+	// 			<-server.GetTrendingVideosTimer().C
+	// 			err := server.FetchTrendingVideos() // refresh trending vids, replaces old timer
+	// 			fmt.Printf("%v\n", server.GetTrendingVideosCache())
+	// 			if err != nil {
+	// 				// retry
+	// 				fmt.Printf("hello")
+	// 			}
+	// 		}
+	// 	}()
+	// }
 
 	// if err = server.FetchTrendingVideos(); err != nil {
 	// 	log.Fatalf("error: %v\n", err)
