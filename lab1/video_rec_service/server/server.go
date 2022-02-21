@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	pb "cs426.yale.edu/lab1/video_rec_service/proto"
 	sl "cs426.yale.edu/lab1/video_rec_service/server_lib"
@@ -50,25 +51,25 @@ func main() {
 		MaxBatchSize:     *maxBatchSize,
 	})
 
-	// if !server.Options.DisableFallback {
-	// 	// goroutine to periodically cache trending videos
-	// 	go func() {
-	// 		for {
-	// 			<-server.GetTrendingVideosTimer().C
-	// 			err := server.FetchTrendingVideos() // refresh trending vids, replaces old timer
-	// 			fmt.Printf("%v\n", server.GetTrendingVideosCache())
-	// 			if err != nil {
-	// 				// retry
-	// 				fmt.Printf("hello")
-	// 			}
-	// 		}
-	// 	}()
-	// }
+	if !server.Options.DisableFallback {
+		go func() { // goroutine to periodically cache trending videos
+			for {
+				<-server.GetTrendingVideosTimer().C
+				err := server.FetchTrendingVideos() // refresh trending vids, replaces old timer
+				if err != nil {
+					log.Printf("GetTrendingVideos failed; back off for 10 seconds...\n")
+					time.Sleep(10 * time.Second)
+				} else {
+					log.Printf("Successfully retrieved trending videos\n")
+				}
+			}
+		}()
+	}
 
 	// if err = server.FetchTrendingVideos(); err != nil {
 	// 	log.Fatalf("error: %v\n", err)
 	// }
-	// fmt.Printf("%v\n", server.GetTrendingVideosCache())
+	// fmt.Printf("Trending Videos Cache: %v\n", server.GetTrendingVideosCache())
 
 	pb.RegisterVideoRecServiceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())
