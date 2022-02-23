@@ -57,7 +57,7 @@ func main() {
 				<-server.GetTrendingVideosTimer().C
 				err := server.FetchTrendingVideos() // refresh trending vids, replaces old timer
 				if err != nil {
-					log.Printf("GetTrendingVideos failed; back off for 10 seconds...\n")
+					log.Printf("%v Backing off for 10 seconds...", fmt.Errorf("failed to fetch trending videos: %w", err))
 					time.Sleep(10 * time.Second)
 				} else {
 					log.Printf("Successfully retrieved trending videos\n")
@@ -65,11 +65,6 @@ func main() {
 			}
 		}()
 	}
-
-	// if err = server.FetchTrendingVideos(); err != nil {
-	// 	log.Fatalf("error: %v\n", err)
-	// }
-	// fmt.Printf("Trending Videos Cache: %v\n", server.GetTrendingVideosCache())
 
 	pb.RegisterVideoRecServiceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())

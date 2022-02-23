@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"cs426.yale.edu/lab1/ranker"
 	umc "cs426.yale.edu/lab1/user_service/mock_client"
@@ -93,7 +95,7 @@ func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceS
 
 	return &VideoRecServiceServer{
 		Options: options,
-		Stats:   VideoRecServiceStats{TotalRequests: 1},
+		Stats:   VideoRecServiceStats{},
 		trendingVideos: TrendingVideos{
 			cache: make([]*vpb.VideoInfo, 0),
 			timer: time.NewTicker(time.Nanosecond),
@@ -123,12 +125,19 @@ func (server *VideoRecServiceServer) MakeUserServiceClient() (UserServiceInterfa
 	if server.mockUserServiceClient == nil {
 		conn, err := grpc.Dial(server.Options.UserServiceAddr, opts...)
 		if err != nil {
-			// TODO: handle error
-			fmt.Printf("user grpc dial failed. Retrying... %v\n", err)
+			errStatus, _ := status.FromError(err)
+			log.Printf("user grpc dial failed. Retrying...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+			atomic.AddUint64(&server.Stats.UserServerErrors, 1)
+			atomic.AddUint64(&server.Stats.TotalErrors, 1)
 			conn, err = grpc.Dial(server.Options.UserServiceAddr, opts...)
 			if err != nil {
-				fmt.Printf("user grpc dial failed twice: %v\n", err)
-				return nil, nil, err
+				errStatus, _ := status.FromError(err)
+				log.Printf("user grpc dial failed twice\n")
+				log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+				atomic.AddUint64(&server.Stats.UserServerErrors, 1)
+				atomic.AddUint64(&server.Stats.TotalErrors, 1)
+				return nil, nil, fmt.Errorf("failed to connect to user service: %w", err)
 			}
 		}
 		// user service RPC client
@@ -145,12 +154,19 @@ func (server *VideoRecServiceServer) MakeVideoServiceClient() (VideoServiceInter
 	if server.mockVideoServiceClient == nil {
 		conn, err := grpc.Dial(server.Options.VideoServiceAddr, opts...)
 		if err != nil {
-			// TODO: handle error
-			fmt.Printf("user grpc dial failed. Retrying... %v\n", err)
+			errStatus, _ := status.FromError(err)
+			log.Printf("video grpc dial failed. Retrying...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+			atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
+			atomic.AddUint64(&server.Stats.TotalErrors, 1)
 			conn, err = grpc.Dial(server.Options.VideoServiceAddr, opts...)
 			if err != nil {
-				fmt.Printf("user grpc dial failed twice: %v\n", err)
-				return nil, nil, err
+				errStatus, _ := status.FromError(err)
+				log.Printf("video grpc dial failed twice\n")
+				log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+				atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
+				atomic.AddUint64(&server.Stats.TotalErrors, 1)
+				return nil, nil, fmt.Errorf("failed to connect to video service: %w", err)
 			}
 		}
 		// user service RPC client
@@ -180,14 +196,16 @@ func (server *VideoRecServiceServer) GetTopVideos(
 
 	userServiceClient, usConnClose, err := server.MakeUserServiceClient()
 	if err != nil {
-		return nil, err
+		// return nil, fmt.Errorf("failed to create user service client: %w", err)
+		return nil, status.Errorf(codes.Unavailable, "failed to create user service client: %w", err)
 	}
 	if usConnClose != nil {
 		defer usConnClose()
 	}
 	videoServiceClient, vsConnClose, err := server.MakeVideoServiceClient()
 	if err != nil {
-		return nil, err
+		// return nil, fmt.Errorf("failed to create video service client: %w", err)
+		return nil, status.Errorf(codes.Unavailable, "failed to create video service client: %w", err)
 	}
 	if vsConnClose != nil {
 		defer vsConnClose()
@@ -219,17 +237,21 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 	// get user info
 	userResp, err := userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
 	if err != nil {
-		// TODO: handle error
-		log.Printf("GetUser failed (%v). Retrying...\n", err)
+		errStatus, _ := status.FromError(err)
+		log.Printf("GetUser failed. Retrying...\n")
+		log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 		atomic.AddUint64(&server.Stats.UserServerErrors, 1)
+		atomic.AddUint64(&server.Stats.TotalErrors, 1)
 		userResp, err = userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
 		if err != nil {
+			errStatus, _ := status.FromError(err)
 			log.Printf("GetUser failed twice. Fallback to trending videos...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 			atomic.AddUint64(&server.Stats.StaleResponses, 1)
 			return &pb.GetTopVideosResponse{
 				Videos:        server.GetTrendingVideosCache(),
 				StaleResponse: true,
-			}, err
+			}, nil
 		}
 	}
 	subscribedTo := userResp.Users[0].GetSubscribedTo()
@@ -246,17 +268,20 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		batch := subscribedTo[beg:end]
 		subResp, err := userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
 		if err != nil {
-			// TODO: handle error
-			log.Printf("GetUser failed (%v). Retrying...\n", err)
+			errStatus, _ := status.FromError(err)
+			log.Printf("GetUser failed. Retrying...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 			atomic.AddUint64(&server.Stats.UserServerErrors, 1)
 			subResp, err = userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: batch})
 			if err != nil {
+				errStatus, _ := status.FromError(err)
 				log.Printf("GetUser failed twice. Fallback to trending videos...\n")
+				log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 				atomic.AddUint64(&server.Stats.StaleResponses, 1)
 				return &pb.GetTopVideosResponse{
 					Videos:        server.GetTrendingVideosCache(),
 					StaleResponse: true,
-				}, err
+				}, nil
 			}
 		}
 		userInfos = append(userInfos, subResp.GetUsers()...)
@@ -292,18 +317,20 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		// get liked videos info
 		videoResp, err := videoServiceClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: batch})
 		if err != nil {
-			// TODO: handle error
+			errStatus, _ := status.FromError(err)
 			log.Printf("GetVideo failed. Retrying...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 			atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
-			atomic.AddUint64(&server.Stats.TotalErrors, 1)
 			videoResp, err = videoServiceClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: batch})
 			if err != nil {
+				errStatus, _ := status.FromError(err)
 				log.Printf("GetVideo failed twice. Fallback to trending videos...\n")
+				log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 				atomic.AddUint64(&server.Stats.StaleResponses, 1)
 				return &pb.GetTopVideosResponse{
 					Videos:        server.GetTrendingVideosCache(),
 					StaleResponse: true,
-				}, err
+				}, nil
 			}
 		}
 
@@ -345,13 +372,21 @@ func (server *VideoRecServiceServer) GetStats(
 ) (*pb.GetStatsResponse, error) {
 	server.Stats.RLock()
 	defer server.Stats.RUnlock()
+
+	var avgLatencyMs float32
+	if server.Stats.TotalRequests != 0 {
+		avgLatencyMs = float32(server.Stats.TotalLatencyMs / server.Stats.TotalRequests)
+	} else {
+		avgLatencyMs = 0
+	}
+
 	return &pb.GetStatsResponse{
 		TotalRequests:      server.Stats.TotalRequests,
 		TotalErrors:        server.Stats.TotalErrors,
 		ActiveRequests:     server.Stats.ActiveRequests,
 		UserServiceErrors:  server.Stats.UserServerErrors,
 		VideoServiceErrors: server.Stats.VideoServerErrors,
-		AverageLatencyMs:   float32(server.Stats.TotalLatencyMs / server.Stats.TotalRequests),
+		AverageLatencyMs:   avgLatencyMs,
 		StaleResponses:     server.Stats.StaleResponses,
 	}, nil
 }
@@ -371,8 +406,7 @@ func (server *VideoRecServiceServer) GetTrendingVideosTimer() *time.Ticker {
 func (server *VideoRecServiceServer) FetchTrendingVideos() error {
 	videoServiceClient, vsConnClose, err := server.MakeVideoServiceClient()
 	if err != nil {
-		fmt.Printf("error creating video service client: %v\n", err)
-		return err
+		return fmt.Errorf("failed to create video service client: %w", err)
 	}
 	if vsConnClose != nil {
 		defer vsConnClose()
@@ -383,9 +417,21 @@ func (server *VideoRecServiceServer) FetchTrendingVideos() error {
 		&vpb.GetTrendingVideosRequest{},
 	)
 	if err != nil {
-		// TODO: handle error
-		fmt.Printf("failed to get trending videos: %v\n", err)
-		return err
+		errStatus, _ := status.FromError(err)
+		log.Printf("GetTrendingVideos failed. Retrying...\n")
+		log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+		atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
+		resp, err = videoServiceClient.GetTrendingVideos(
+			context.Background(),
+			&vpb.GetTrendingVideosRequest{},
+		)
+		if err != nil {
+			errStatus, _ := status.FromError(err)
+			log.Printf("GetTrendingVideos failed twice. Canceling FetchTrendingVideos...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+			atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
+			return fmt.Errorf("failed to get trending videos: %w", err)
+		}
 	}
 
 	videoInfos := make([]*vpb.VideoInfo, 0)
@@ -402,13 +448,16 @@ func (server *VideoRecServiceServer) FetchTrendingVideos() error {
 		// get liked videos info
 		videoResp, err := videoServiceClient.GetVideo(context.Background(), &vpb.GetVideoRequest{VideoIds: batch})
 		if err != nil {
-			// TODO: handle error
+			errStatus, _ := status.FromError(err)
 			log.Printf("GetVideo failed. Retrying...\n")
+			log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 			atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
-			atomic.AddUint64(&server.Stats.TotalErrors, 1)
 			videoResp, err = videoServiceClient.GetVideo(context.Background(), &vpb.GetVideoRequest{VideoIds: batch})
 			if err != nil {
+				errStatus, _ := status.FromError(err)
 				log.Printf("GetVideo failed twice. Canceling FetchTrendingVideos...\n")
+				log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
+				atomic.AddUint64(&server.Stats.VideoServerErrors, 1)
 				return err
 			}
 		}
