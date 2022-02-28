@@ -27,11 +27,12 @@ func buildMockGetTopVideosRequest() *pb.GetTopVideosRequest {
 	}
 }
 
-// e2e test of GetTOpVideos
+// e2e test of GetTopVideos
 func TestGetTopVideos(t *testing.T) {
 	// build mock video recommendation service
 	mockUserServiceClient := umc.MakeMockUserServiceClient(*usl.DefaultUserServiceOptions())
 	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(*vsl.DefaultVideoServiceOptions())
+
 	vrs := sl.MakeVideoRecServiceServerWithMocks(
 		sl.DefaultVideoRecServiceOptions(),
 		mockUserServiceClient,
@@ -77,16 +78,19 @@ func TestBatching(t *testing.T) {
 	}
 }
 
-// retry
-func TestRetry(t *testing.T) {
+// fallback
+func TestRetryAndFallback(t *testing.T) {
 	ctx := context.Background()
 
 	// mockUserServiceClient fails
 	mockUserServiceClient := umc.MakeMockUserServiceClient(usl.UserServiceOptions{
-		FailureRate:  5,
+		FailureRate:  3,
 		MaxBatchSize: 250,
 	})
-	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(*vsl.DefaultVideoServiceOptions())
+	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(vsl.VideoServiceOptions{
+		FailureRate:  3,
+		MaxBatchSize: 250,
+	})
 
 	vrs := sl.MakeVideoRecServiceServerWithMocks(
 		sl.DefaultVideoRecServiceOptions(),
@@ -97,6 +101,39 @@ func TestRetry(t *testing.T) {
 	// errMsg := "User service unavailable, resorted to cached trending videos"
 	req := buildMockGetTopVideosRequest()
 
+	// the fallback should catch all errors when requests to the user or video service fails
+	for i := 0; i < 20; i++ {
+		_, err := vrs.GetTopVideos(ctx, req)
+		if err != nil {
+			t.Fatalf("Fallback should have caught error: %v", err)
+		}
+	}
+}
+
+// stats
+func TestGetStats(t *testing.T) {
+	ctx := context.Background()
+
+	// mockUserServiceClient fails
+	mockUserServiceClient := umc.MakeMockUserServiceClient(usl.UserServiceOptions{
+		FailureRate:  3,
+		MaxBatchSize: 250,
+	})
+	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(vsl.VideoServiceOptions{
+		FailureRate:  3,
+		MaxBatchSize: 250,
+	})
+
+	vrs := sl.MakeVideoRecServiceServerWithMocks(
+		sl.DefaultVideoRecServiceOptions(),
+		mockUserServiceClient,
+		mockVideoServiceClient,
+	)
+
+	// errMsg := "User service unavailable, resorted to cached trending videos"
+	req := buildMockGetTopVideosRequest()
+
+	// the fallback should catch all errors when requests to the user or video service fails
 	for i := 0; i < 20; i++ {
 		_, err := vrs.GetTopVideos(ctx, req)
 		if err != nil {
@@ -104,24 +141,84 @@ func TestRetry(t *testing.T) {
 		}
 	}
 
-	// get top videos with batching
-
-	// if err != nil {
-	// 	errStatus, _ := status.FromError(err)
-	// 	// log.Printf("code %d        msg %v", errStatus.Code(), errStatus.Message())
-	// 	// log.Printf("code %d        ", codes.Unavailable)
-	// 	if errStatus.Code() != codes.Unavailable {
-	// 		t.Fatalf("expecting Unavailable error code, but this occurred: %v\n", err)
-	// 	}
-	// 	if errStatus.Message() != errMsg {
-	// 		t.Fatalf("unexpected error message returned: %v\n", err)
-	// 	}
-	// }
-	// t.Fatalf("error should have occurred")
+	stats, err := vrs.GetStats(ctx, &pb.GetStatsRequest{})
+	if err != nil {
+		t.Fatalf("Something went wrong while getting stats: %v", err)
+	}
+	if stats.TotalRequests != 20 {
+		t.Fatalf("Should have 20 requests, not %d", stats.TotalRequests)
+	}
+	if stats.VideoServiceErrors == 0 {
+		t.Fatalf("A video service error should have occurred")
+	}
+	if stats.UserServiceErrors == 0 {
+		t.Fatalf("A user service error should have occurred")
+	}
+	if stats.AverageLatencyMs == 0 {
+		t.Fatalf("Should have calculated an avg latency estimate")
+	}
+	if stats.ActiveRequests != 0 {
+		t.Fatalf("Active requests should now be 0, not %d", stats.ActiveRequests)
+	}
 }
 
-// stats
+// fetch trending videos
+func TestFetchTrendingVideos(t *testing.T) {
+	// build mock video recommendation service
+	mockUserServiceClient := umc.MakeMockUserServiceClient(*usl.DefaultUserServiceOptions())
+	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(*vsl.DefaultVideoServiceOptions())
 
-// error handling
+	vrs := sl.MakeVideoRecServiceServerWithMocks(
+		sl.DefaultVideoRecServiceOptions(),
+		mockUserServiceClient,
+		mockVideoServiceClient,
+	)
 
-// fallback
+	err := vrs.FetchTrendingVideos()
+	if err != nil {
+		t.Fatalf("fetch trending videos from video service failed: %v", err)
+	}
+
+	videos := vrs.GetTrendingVideosCache()
+	if len(videos) == 0 {
+		t.Fatalf("Trending videos cache empty")
+	}
+}
+
+// test batching with retrys and fallbacks
+func TestBatchingWithRetryAndFallbacks(t *testing.T) {
+	ctx := context.Background()
+	maxBatchSize := 10
+
+	// mockUserServiceClient fails
+	mockUserServiceClient := umc.MakeMockUserServiceClient(usl.UserServiceOptions{
+		FailureRate:  10,
+		MaxBatchSize: maxBatchSize,
+	})
+	mockVideoServiceClient := vmc.MakeMockVideoServiceClient(vsl.VideoServiceOptions{
+		FailureRate:  10,
+		MaxBatchSize: maxBatchSize,
+	})
+
+	vrs := sl.MakeVideoRecServiceServerWithMocks(
+		sl.DefaultVideoRecServiceOptions(),
+		mockUserServiceClient,
+		mockVideoServiceClient,
+	)
+	vrs.Options.MaxBatchSize = maxBatchSize
+
+	// just keep fetching until we get something in the cache
+	for len(vrs.GetTrendingVideosCache()) == 0 {
+		_ = vrs.FetchTrendingVideos()
+	}
+
+	req := buildMockGetTopVideosRequest()
+	resp, err := vrs.GetTopVideos(ctx, req)
+	if err != nil {
+		t.Fatalf("GetTopVideos should not return error after fallbacks implemented: %v", err)
+	}
+
+	if len(resp.GetVideos()) == 0 {
+		t.Fatalf("No videos returned")
+	}
+}

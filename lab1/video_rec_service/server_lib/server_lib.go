@@ -194,7 +194,7 @@ func (server *VideoRecServiceServer) GetTopVideos(
 	req *pb.GetTopVideosRequest,
 ) (*pb.GetTopVideosResponse, error) {
 
-	userServiceClient, usConnClose, err := server.MakeUserServiceClient()
+	userServiceClient, usConnClose, err := server.MakeUserServiceClient() // with retry
 	if err != nil {
 		// return nil, fmt.Errorf("failed to create user service client: %w", err)
 		return nil, status.Errorf(codes.Unavailable, "failed to create user service client: %w", err)
@@ -202,7 +202,7 @@ func (server *VideoRecServiceServer) GetTopVideos(
 	if usConnClose != nil {
 		defer usConnClose()
 	}
-	videoServiceClient, vsConnClose, err := server.MakeVideoServiceClient()
+	videoServiceClient, vsConnClose, err := server.MakeVideoServiceClient() // with retry
 	if err != nil {
 		// return nil, fmt.Errorf("failed to create video service client: %w", err)
 		return nil, status.Errorf(codes.Unavailable, "failed to create video service client: %w", err)
@@ -241,7 +241,6 @@ func (server *VideoRecServiceServer) _GetTopVideos(
 		log.Printf("GetUser failed. Retrying...\n")
 		log.Printf("(errcode %d) %v", errStatus.Code(), errStatus.Message())
 		atomic.AddUint64(&server.Stats.UserServerErrors, 1)
-		atomic.AddUint64(&server.Stats.TotalErrors, 1)
 		userResp, err = userServiceClient.GetUser(ctx, &upb.GetUserRequest{UserIds: []uint64{req.GetUserId()}})
 		if err != nil {
 			errStatus, _ := status.FromError(err)

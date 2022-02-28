@@ -1,0 +1,32 @@
+ESTIMATE of time to complete assignment: 20 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+2/13  10:00pm  2:00  reading spec, starting GetTopVideos()
+2/14   8:00pm  2:00  ran into network communication issue between services
+2/15   7:00pm  2:00  fixed server communication issue (ports)
+2/18  11:30am  2:00  discuss approaches for GetStats in OH, began implementation
+2/19   3:00pm  3:00  finish GetStats, start retries and fallbacks
+2/20  10:00pm  2:00  finish start retries, fallback handling, error handling
+2/22   6:00pm  3:00  clean up error handling, unit testing, discussion q's
+               ----
+              16:00  TOTAL time spent
+
+I discussed my solution with: Tony Xu, Seun Ominije
+
+I probably took longer on this lab than necessary. I spent a lot of time
+flip-flopping between different approaches to managing concurrency for GetStats,
+and I ended up spending a lot of time looking into specific idioms of the Go
+language to see if I could re-write code with more legibility and modularity.
+I tried writing function wrappers to enable retries and batching for gRPC
+requests, which ended up being a bit of a fruitless endeavor as I could not find
+a way for a function to accept another function as an argument if we did not
+know a priori the exact signature of the function argument.
+
+Anyway, I spent a considerable amount of time thinking about how to keep latency 
+reasonable, re-implementing my mutex lock on the stats I was tracking with atomic
+counters instead. Cleaning up errors also took a while, since I wasn't super
+clear about what the expectations were after implementing fallbacks, since we 
+had largely eliminated the possibility of returning errors from GetTopVideos()
+we could fall back on to cached trending videos.

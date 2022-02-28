@@ -1,0 +1,81 @@
+A1
+Dial() attempts to connect to a gRPC server given an address, which consists of ip address and port number. 
+Once the connection is established, we can create client stubs to send gRPC requests to the server. This 
+makes me think that Dial() corresponds to connect() from the socket API; the client calls Dial()/connect() 
+to establish a TCP socket connection.
+
+A2
+Dial() fails when it is unable to contact a server at the specified address, either because of network 
+issues, or the server is unresponsive, or there is no server listening on that address. The status code I 
+would choose is UNAVAILABLE. The description of the error code is broad, stating that “The service is 
+currently unavailable. This is most likely a transient condition, which can be corrected by retrying with a 
+backoff.” This is true for our statement, since GetTopVideos() is reliant on dialing connections for the 
+user and video services and if the services are down, we can back off for a bit and re-dial. (This is 
+assuming we do indeed return errors, whereas once we have implemented fallbacks, our recommendation service 
+will no longer return errors.) It makes sense to let the client know that the service is simply “unavailable” 
+for now. 
+
+A3
+Under the hood, our GetUser() request will be packaged into a message and sent over HTTP/2 on a TCP 
+connection. Thus I would guess that a write/send operation would be issued with the message as stream of 
+bytes sent on to the established connection. The server will have to be listening on that address and then 
+read/receive the stream of bytes when they arrive on the connection. Because gRPC is built on TCP, we can be 
+sure that if the connection is valid, the messages will be delivered. However if the connection is broken 
+halfway because of network connection issues, or if the server gets interrupted while reading, then the calls 
+will return errors. Assuming the network calls succeed, GetUser could return errors if there are mismatches 
+with the protobuf definitions and the generated golang code stubs.
+
+A4
+We have to dial our connections for a specific address where either the video or user service server is 
+listening. So if we dialed a connection for the video service and tried to use the same connection for the 
+user service, we would simply fail in our attempts to call any of the user service RPC API.
+
+A8
+The advantage of sending batched requests concurrently is that if they can be successfully parallelized, then 
+we could potentially reduce response latency by several times (depending on the size of the batch). However, 
+parallelizing requests requires that both the client and the server can process the requests in parallel. 
+There is no guarantee that the gRPC server will be able to parallelize its processing of our requests.
+
+A disadvantage is that concurrency has performance overhead, which could end up slowing down the request if we 
+break up the request into a few batches. Another disadvantage is simply the complexity that concurrent requests 
+introduces. It could mean potentially more bugs, and developers have to make sure they are seeing significant 
+throughput improvements that are worth the additional complexity.
+
+C1
+Retrying is a bad option if we are blasting a service that is already down. Sometimes the issue is transient and 
+we may need to just back off for a bit, but sometimes a server is already overloaded with requests and continuing 
+to add to the onslaught will not expedite the process of receiving a response. This is why most production grade 
+APIs will implement rate limiters to prevent services from retrying too much or sending too many requests.
+
+C2
+In general for our video recommendation service, I don’t think it is absolutely critical that the trending video 
+responses are up to date. A user can survive with video recommendations that are a little stale. If the video 
+service has been down for a while, however, it’s possible that the recommendations will have been the same for a 
+long time and that they have already seen many of the old recommended trending videos. In that case, instead of 
+letting the user suspect that the video recommendation service is actually just not very good at recommending 
+videos, we could display an error explaining that the video service is temporarily down.
+
+C3
+An additional strategy would be to cache previous sets of top videos for users, just like how we are caching 
+generic trending videos. This way, we would be able to suggest personalized recommendations even when the user 
+and/or the video service are unavailable. However, this would probably greatly increase the complexity of our 
+application. If the video recommendation service ends up attracting a huge number of users who periodically ask 
+for requests, we would not be able to store all of their personalized recommendations in a cache. We would have to 
+find a way to prioritize certain users, for example with a Least Recently Used cache to prioritize those who 
+frequently visit. We can also avoid storing duplicates of videos keeping a hashmap of videoId to VideoInfo. I 
+suspect this approach using maps would improve memory efficiency, since I would guess the same highly popular 
+videos would appear in a lot of different people’s personalized recommendations (though I don’t know if the ranker 
+algorithm would consider “popularity” as a factor).
+
+C4
+One issue is that there is a non-trivial amount of overhead for establishing new connections, and if we have a high
+number of requests, a significant amount of the latency may come from repeatedly re-establishing a connection with
+the user or video service, especially if the throughput of the service is very high. 
+
+I would change my implementation to store a reference to a dialed gRPC connection to the video and user services in 
+the VideoRecServiceServer struct object, and then create client stubs from those stored connections to send gRPC 
+requests. This way each time we need to send a request to the video and user services, we can just reference the same 
+connection in memory. The trade off is that now we have introduced a bottleneck of a single connection resource that 
+each request must use to communicate and transfer data, and with enough requests, we will quickly run up against 
+those limitations. A way to address this issue is to create and manage a pool of connections from which we can dispatch 
+and reclaim connections to service gRPC requests.
