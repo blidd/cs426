@@ -388,6 +388,8 @@ func TestRejoin2B(t *testing.T) {
 	// new leader commits, also for index=2
 	cfg.one(103, 2, true)
 
+	log.Printf("***** new leader commits 103 *****")
+
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
