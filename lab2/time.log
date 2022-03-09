@@ -1,0 +1,21 @@
+ESTIMATE of time to complete assignment: 45 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+2/26   4:00pm  3:00  reading paper, spec, to understand Raft
+2/27   5:00pm  2:00  start work on leader election 2A
+2/28   7:00pm  1:00  office hours to ask some questions about Raft details
+3/1    8:00pm  1:00  continue work on leader election
+3/2    7:00pm  2:00  working on leader election test cases
+3/5    5:00pm  2:00  working on log replication
+3/6    2:00pm  2:00  log replication
+3/7    2:00pm  4:00  log replication test cases
+3/8   10:00am  2:00  log replication test cases
+3/8    4:00pm  4:00  more log replication test cases
+3/9   11:00pm  1:00  finally done with log replication test cases
+               ----
+                :00  TOTAL time spent
+
+I discussed my solution with:
+

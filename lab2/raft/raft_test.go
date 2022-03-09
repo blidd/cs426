@@ -167,6 +167,7 @@ func TestRPCBytes2B(t *testing.T) {
 	for index := 2; index < iters+2; index++ {
 		cmd := randstring(5000)
 		xindex := cfg.one(cmd, servers, false)
+		DPrintf("new cmd")
 		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
 		}
@@ -449,7 +450,7 @@ func TestBackup2B(t *testing.T) {
 		cfg.one(rand.Int(), 3, true)
 	}
 
-	log.Printf("******** successfully committed a lot of new commands")
+	// log.Printf("******** successfully committed a lot of new commands")
 
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
@@ -459,14 +460,14 @@ func TestBackup2B(t *testing.T) {
 	}
 	cfg.disconnect(other)
 
-	log.Printf("******** partitioned again: %d leader2, %d disconnected", leader2, other)
+	// log.Printf("******** partitioned again: %d leader2, %d disconnected", leader2, other)
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
 
-	log.Printf("******** more stuff that wont commit")
+	// log.Printf("******** more stuff that wont commit")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -480,13 +481,13 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
-	log.Printf("******** reconnect everybody")
+	// log.Printf("******** reconnect everybody")
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
-	log.Printf("******** successfully committed a lot of new commands 2")
+	// log.Printf("******** successfully committed a lot of new commands 2")
 
 	// now everyone
 	for i := 0; i < servers; i++ {
