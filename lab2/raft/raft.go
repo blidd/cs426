@@ -129,6 +129,10 @@ func (rf *Raft) GetLastLogEntry() *LogEntry {
 	}
 }
 
+func (rf *Raft) GetLastLogIndex() int { // TODO: make this thread safe
+	return len(rf.log) - 1
+}
+
 func (rf *Raft) MatchLogEntry(prevLogIndex, prevLogTerm int) bool {
 	if prevLogIndex >= len(rf.log) {
 		return false
@@ -140,8 +144,7 @@ func (rf *Raft) MatchLogEntry(prevLogIndex, prevLogTerm int) bool {
 }
 
 func (rf *Raft) IsMajority(x int) bool {
-	majority := float64(len(rf.peers) / 2)
-	return x >= int(majority)
+	return x > len(rf.peers)/2
 }
 
 // return currentTerm and whether this server
@@ -209,6 +212,7 @@ type RequestVoteReply struct {
 	Term        int32
 	VoteGranted bool
 	Reason      string
+	Id          int
 }
 
 //
@@ -221,29 +225,38 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.GetCurrentTerm()
 	if args.Term < rf.GetCurrentTerm() {
 		reply.VoteGranted = false
-		reply.Reason = fmt.Sprintf("Candidate term %d < my term", args.Term)
+		reply.Reason = fmt.Sprintf("candidate term %d < %d", args.Term, reply.Term)
 		return
-	} else {
+	} else if args.Term > reply.Term {
 		rf.SetCurrentTerm(args.Term)
 		rf.SetVotedFor(-1)
 		rf.SetServerState(Follower)
-		log.Printf("becoming follower %d", rf.me)
+		log.Printf("becoming follower %d - received RequestVote RPC from %d w term %d > %d", rf.me, args.CandidateId, args.Term, reply.Term)
 	}
+
 	if rf.GetVotedFor() < 0 || rf.GetVotedFor() == args.CandidateId {
 		// log.Printf("shouldnt be in here")
 		// log.Printf("peer id: %d    votedFor: %v      requestFrom: %d    term: %d      candidate: %d", rf.me, rf.votedFor, args.CandidateId, rf.currentTerm, args.CandidateId)
 
 		// 5.4.1 election restriction: check if the candidate's log is up-to-date
-		if args.LastLogTerm >= rf.GetLastLogEntry().Term &&
-			args.LastLogIndex >= len(rf.log)-1 {
+		// if args.LastLogTerm >= rf.GetLastLogEntry().Term &&
+		// 	args.LastLogIndex >= len(rf.log)-1 {
+		if CheckUpToDate(
+			args.LastLogTerm,
+			args.LastLogIndex,
+			rf.GetLastLogEntry().Term,
+			rf.GetLastLogIndex(),
+		) {
 			rf.SetVotedFor(args.CandidateId)
 			reply.VoteGranted = true
 			rf.voteGrantedCh <- struct{}{}
 		} else {
 			reply.VoteGranted = false
+			reply.Reason = fmt.Sprintf("log is not up to date")
 		}
 	} else {
 		reply.VoteGranted = false
+		reply.Reason = fmt.Sprintf("already voted for %d", rf.GetVotedFor())
 	}
 }
 
@@ -293,12 +306,13 @@ type AppendEntriesArgs struct {
 
 // AppendEntries RPC reply
 type AppendEntriesReply struct {
-	Term    int32
-	Success bool
+	Term        int32
+	Success     bool
+	NumAppended int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	// log.Printf("inside appendEntries %d->%d term:%d", args.LeaderId, rf.me, rf.GetCurrentTerm())
+	DPrintf("inside appendEntries %d->%d term:%d", args.LeaderId, rf.me, rf.GetCurrentTerm())
 	reply.Term = rf.GetCurrentTerm()
 	if args.Term < rf.GetCurrentTerm() {
 		// log.Printf("%d->%d term failed: leader term %d < my term %d", args.LeaderId, rf.me, args.Term, rf.GetCurrentTerm())
@@ -308,29 +322,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.SetCurrentTerm(args.Term)
 		rf.SetVotedFor(-1)
 		rf.SetServerState(Follower)
-		log.Printf("becoming follower %d", rf.me)
+		log.Printf("becoming follower %d - received AE RPC from %d w term %d > %d", rf.me, args.LeaderId, args.Term, reply.Term)
 	}
 	if !rf.MatchLogEntry(args.PrevLogIndex, args.PrevLogTerm) {
 		// log.Printf("%d->%d log match failed", args.LeaderId, rf.me)
 		reply.Success = false
+		rf.appendEntriesCh <- struct{}{}
 		return
 	}
 
-	var new int
-	for new = 0; new < len(args.Entries); new++ {
-		curr := args.PrevLogIndex + 1 + new
+	var entryIdx int
+	for entryIdx = 0; entryIdx < len(args.Entries); entryIdx++ {
+		curr := args.PrevLogIndex + 1 + entryIdx
 		// log has no existing entries at idx curr, so just break
-		if len(rf.log) <= curr {
+		if curr >= len(rf.log) {
 			break
 		}
 		// log has entry at idx curr; check if conflicts with new entry
-		if rf.log[curr].Term != args.Entries[new].Term {
+		if rf.log[curr].Term != args.Entries[entryIdx].Term {
 			rf.log = rf.log[:curr]
 			break
 		}
 	}
 
-	rf.log = append(rf.log, args.Entries[new:]...)
+	rf.log = append(rf.log, args.Entries[entryIdx:]...)
+	reply.NumAppended = len(args.Entries[entryIdx:])
 	// log.Printf("(%d) log: %v", rf.me, rf.log)
 	// rf.DumpLog()
 
@@ -348,9 +364,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) DumpLog() {
-	logEntries := make([]interface{}, len(rf.log))
+	logEntries := make([]int, len(rf.log))
 	for i, entry := range rf.log {
-		logEntries[i] = entry.Command
+		logEntries[i] = entry.Term
 	}
 	log.Printf("(%d) log: %+v", rf.me, logEntries)
 }
@@ -424,8 +440,14 @@ func (rf *Raft) Candidate() {
 		if id != rf.me { // skip sending rpc to myself
 			go func(peer *labrpc.ClientEnd, id int) {
 				reply := &RequestVoteReply{}
+				termSent := rf.GetCurrentTerm()
 				if ok := peer.Call("Raft.RequestVote", args, reply); ok {
+					// SGTR: guard against term confusion
+					if rf.GetCurrentTerm() != termSent {
+						return
+					}
 					// log.Printf("RequestVote worked: %d -> %d   reply: %v", rf.me, id, reply)
+					reply.Id = id
 					replyCh <- *reply
 				} else {
 					// TODO: handle error
@@ -443,9 +465,16 @@ func (rf *Raft) Candidate() {
 			// our candidacy and revert to followers
 			// log.Printf("Becoming follower: %d", rf.me)
 			rf.SetServerState(Follower)
-			log.Printf("becoming follower %d", rf.me)
+			log.Printf("(%d) becoming follower - received AE RPC as candidate", rf.me)
+
 			return
+		case <-rf.voteGrantedCh:
+			rf.SetServerState(Follower)
+			log.Printf("(%d) becoming follower - voted for another candidate", rf.me)
+			return
+
 		case reply := <-replyCh:
+			log.Printf("(%d->%d) requestVote: %+v", rf.me, reply.Id, reply)
 			if reply.VoteGranted {
 				votes++
 				// if votes received from majority of servers: become leader
@@ -460,10 +489,11 @@ func (rf *Raft) Candidate() {
 				// current term is higher, that means we could have missing
 				// committed entries from that term. So we update our current
 				// term and become Followers.
-				rf.SetCurrentTerm(reply.Term)
+
 				rf.SetVotedFor(-1)
 				rf.SetServerState(Follower)
-				log.Printf("becoming follower %d", rf.me)
+				log.Printf("becoming follower %d - during candidacy, %d had higher term %d > %d", rf.me, reply.Id, reply.Term, rf.GetCurrentTerm())
+				rf.SetCurrentTerm(reply.Term)
 				return
 			}
 
@@ -477,7 +507,7 @@ func (rf *Raft) Candidate() {
 
 }
 
-func (rf *Raft) CheckUpToDate(log1Term, log1Index, log2Term, log2Index int) bool {
+func CheckUpToDate(log1Term, log1Index, log2Term, log2Index int) bool {
 	if log1Term > log2Term {
 		return true
 	}
@@ -509,37 +539,37 @@ func (rf *Raft) CanCommit(n int) bool {
 	return true
 }
 
-func (rf *Raft) TryCommit(ch <-chan AppendEntriesReply) {
-	for {
-		select {
-		case reply := <-ch:
+// func (rf *Raft) TryCommit(ch <-chan AppendEntriesReply) {
+// 	for {
+// 		select {
+// 		case reply := <-ch:
 
-			if reply.Term > rf.GetCurrentTerm() {
-				rf.SetCurrentTerm(reply.Term)
-				rf.SetVotedFor(-1)
-				rf.SetServerState(Follower)
-				log.Printf("becoming follower %d", rf.me)
-				return
-			}
+// 			if reply.Term > rf.GetCurrentTerm() {
+// 				rf.SetCurrentTerm(reply.Term)
+// 				rf.SetVotedFor(-1)
+// 				rf.SetServerState(Follower)
+// 				log.Printf("becoming follower %d", rf.me)
+// 				return
+// 			}
 
-			n := rf.commitIndex + 1
-			// log.Printf("------- n: %d -------", n)
-			// lastIdx, _ := rf.GetLastLogEntry()
-			for n < len(rf.log) {
-				if rf.CanCommit(n) {
-					rf.commitIndex = n
-					// log.Printf("committed by leader")
-					// log.Printf("id:%d last_log: %v", rf.me, rf.log[len(rf.log)-1])
-					n++
-				} else {
-					break
-				}
-			}
-		case <-time.After(50 * time.Millisecond):
-			return
-		}
-	}
-}
+// 			n := rf.commitIndex + 1
+// 			// log.Printf("------- n: %d -------", n)
+// 			// lastIdx, _ := rf.GetLastLogEntry()
+// 			for n < len(rf.log) {
+// 				if rf.CanCommit(n) {
+// 					rf.commitIndex = n
+// 					// log.Printf("committed by leader")
+// 					// log.Printf("id:%d last_log: %v", rf.me, rf.log[len(rf.log)-1])
+// 					n++
+// 				} else {
+// 					break
+// 				}
+// 			}
+// 		case <-time.After(50 * time.Millisecond):
+// 			return
+// 		}
+// 	}
+// }
 
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
@@ -560,6 +590,7 @@ func (rf *Raft) ticker() {
 			}
 			// log.Printf("(%d) applied %v at idx %d", rf.me, rf.log[rf.lastApplied].Command, rf.lastApplied)
 		}
+		// rf.DumpLog()
 
 		switch rf.GetServerState() {
 		case Follower:
@@ -568,8 +599,10 @@ func (rf *Raft) ticker() {
 				// if we get a message to reset timeout, just refresh by doing nothing
 				// and going into the next iteration of the loop
 				// log.Printf("%d acknowledged AppendEntries", rf.me)
+				continue
 			case <-rf.voteGrantedCh:
 				// (Student Guide) reset timer if I grant a vote
+				continue
 			case <-RandomTimeout(500, 1000):
 				log.Printf("becoming candidate: %d", rf.me)
 				// if the election timeout occurs, convert to candidate
@@ -592,19 +625,21 @@ func (rf *Raft) ticker() {
 				// log.Printf("(%d) reset nextIndex[%d]: %d", rf.me, i, len(rf.log))
 			}
 			rf.SetServerState(Leader)
-			log.Printf("becoming leader: %d", rf.me)
+			log.Printf("(%d) becoming leader in term %d", rf.me, rf.GetCurrentTerm())
 
 		case Leader:
 			// log.Printf("looped")
 			// log.Printf("commitIndex: %d", rf.commitIndex)
-			replyCh := make(chan AppendEntriesReply, len(rf.peers))
+			// replyCh := make(chan AppendEntriesReply, len(rf.peers))
 
 			for id, peer := range rf.peers {
 				if id != rf.me {
 					var args *AppendEntriesArgs
+					// log.Printf("(%d->%d) appending")
 					// log.Printf("%d->%d next:%d log:%v", rf.me, id, rf.nextIndex[id], rf.log)
 
 					if len(rf.log)-1 >= rf.nextIndex[id] { // actually append entries
+						// log.Printf("%d->%d appending, nextIndex[%d] = %d", rf.me, id, id, rf.nextIndex[id])
 						prevLogIndex := rf.nextIndex[id] - 1 // TODO: get length of log safely
 						args = &AppendEntriesArgs{
 							Term:         rf.GetCurrentTerm(),
@@ -621,6 +656,7 @@ func (rf *Raft) ticker() {
 						// log.Printf("appending %d->%d args: %+v", rf.me, id, args)
 						// log.Printf("entries: %v", entries)
 					} else { // just a heartbeat message
+						// log.Printf("%d->%d heartbeat, nextIndex[%d] = %d", rf.me, id, id, rf.nextIndex[id])
 						prevLogIndex := rf.nextIndex[id] - 1 // TODO: get length of log safely
 						args = &AppendEntriesArgs{
 							Term:         rf.GetCurrentTerm(),
@@ -634,15 +670,24 @@ func (rf *Raft) ticker() {
 					}
 
 					go func(peer *labrpc.ClientEnd, id int, args *AppendEntriesArgs) {
-						reply := &AppendEntriesReply{}
+						reply := &AppendEntriesReply{
+							Success:     false,
+							NumAppended: 0,
+						}
+						termSent := rf.GetCurrentTerm()
 						if ok := peer.Call("Raft.AppendEntries", args, reply); ok {
 							// log.Printf("%d->%d got reply: %+v", id, rf.me, reply)
+
+							// SGTR: guard against term confusion
+							if rf.GetCurrentTerm() != termSent {
+								return
+							}
 
 							if reply.Term > rf.GetCurrentTerm() {
 								rf.SetCurrentTerm(reply.Term)
 								rf.SetVotedFor(-1)
 								rf.SetServerState(Follower)
-								log.Printf("becoming follower %d", rf.me)
+								log.Printf("becoming follower %d - encountered higher termm when AE RPC", rf.me)
 								return
 							}
 
@@ -652,23 +697,22 @@ func (rf *Raft) ticker() {
 								// log.Printf("(%d) n: %d len: %d", rf.me, n, len(rf.log))
 								if rf.CanCommit(n) {
 									rf.commitIndex = n
-									break
+									return
 								}
 								n--
 							}
 
 							if reply.Success {
-								rf.nextIndex[id] += len(args.Entries) // TODO: safety
+								rf.nextIndex[id] += reply.NumAppended // TODO: safety
 								rf.matchIndex[id] = args.PrevLogIndex + len(args.Entries)
-								// log.Printf("nextIndex[%d] = %d", id, rf.nextIndex[id])
-								// log.Printf("matchIndex[%d] = %d", id, rf.matchIndex[id])
+								// log.Printf("%d->%d AE commands: %v terms: %v, nextIndex[%d] = %d", id, rf.me, commands, terms, id, rf.nextIndex[id])
 							} else {
-								rf.nextIndex[id]--
+								if reply.Term <= rf.GetCurrentTerm() {
+									rf.nextIndex[id]--
+								}
 							}
-							replyCh <- *reply
-						} else {
-							// log.Printf("AppendEntries failed: %d->%d", rf.me, id)
-							replyCh <- *reply
+							// } else {
+							// 	log.Printf("AppendEntries failed: %d->%d", rf.me, id)
 						}
 					}(peer, id, args)
 				}
