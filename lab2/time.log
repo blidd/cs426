@@ -14,6 +14,12 @@ Date  Started  Spent Work completed
 3/8   10:00am  2:00  log replication test cases
 3/8    4:00pm  4:00  more log replication test cases
 3/9   11:00pm  1:00  finally done with log replication test cases
+3/10  11:00am  2:00  2C persistence research
+3/12   8:00am  3:00  implement persistence functions, debugging
+3/13   4:00pm  2:00  debugging Figure8Unreliable
+3/14   6:00pm  2:00  finished debugging
+3/15   1:00pm  1:00  fixing data race issues
+
                ----
                 :00  TOTAL time spent
 

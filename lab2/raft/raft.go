@@ -74,8 +74,6 @@ type Raft struct {
 	state           int32
 	appendEntriesCh chan struct{}
 	voteGrantedCh   chan struct{}
-
-	timestart time.Time
 }
 
 // possible states
@@ -175,39 +173,20 @@ func (rf *Raft) GetLastLogIndex() int {
 	return len(rf.log) - 1
 }
 
-// func (rf *Raft) MatchLogEntry(prevLogIndex, prevLogTerm int) bool {
-// 	logLength := rf.GetLastLogIndex() + 1
-// 	if prevLogIndex >= logLength {
-// 		return false
-// 	}
-// 	if rf.log[prevLogIndex].Term == prevLogTerm {
-// 		return true
-// 	}
-// 	DPrintf("(%d) unmatched term: %d != %d", rf.me, rf.log[prevLogIndex].Term, prevLogTerm)
-
-// 	// // if the terms don't match, find the first index it stores for that term
-// 	// term := rf.log[prevLogIndex].Term
-// 	// i := prevLogIndex
-// 	// for i > 0 && rf.log[i-1].Term == term {
-// 	// 	i--
-// 	// }
-
-// 	return false
-// }
-
 func (rf *Raft) MatchLogEntry(prevLogIndex, prevLogTerm int) (int, bool) {
 	logLength := rf.GetLastLogIndex() + 1
 	if prevLogIndex >= logLength {
 		return logLength, false
 	}
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if rf.log[prevLogIndex].Term == prevLogTerm {
 		return -1, true
 	}
-	// DPrintf("(%d) unmatched term: %d != %d", rf.me, rf.log[prevLogIndex].Term, prevLogTerm)
-
 	// if the terms don't match, find the first index it stores for that term
 	term := rf.log[prevLogIndex].Term
+
 	i := prevLogIndex
 	for i > 0 && rf.log[i-1].Term == term {
 		i--
@@ -314,7 +293,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.SetCurrentTerm(args.Term)
 		rf.SetVotedFor(-1)
 		rf.SetServerState(Follower)
+		rf.mu.Lock()
 		rf.persist()
+		rf.mu.Unlock()
 		// log.Printf("becoming follower %d - received RequestVote RPC from %d w term %d > %d", rf.me, args.CandidateId, args.Term, reply.Term)
 	}
 
@@ -323,8 +304,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// log.Printf("peer id: %d    votedFor: %v      requestFrom: %d    term: %d      candidate: %d", rf.me, rf.votedFor, args.CandidateId, rf.currentTerm, args.CandidateId)
 
 		// 5.4.1 election restriction: check if the candidate's log is up-to-date
-		// if args.LastLogTerm >= rf.GetLastLogEntry().Term &&
-		// 	args.LastLogIndex >= len(rf.log)-1 {
 		if CheckUpToDate(
 			args.LastLogTerm,
 			args.LastLogIndex,
@@ -334,7 +313,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.SetVotedFor(args.CandidateId)
 			reply.VoteGranted = true
 			rf.voteGrantedCh <- struct{}{}
-			rf.timestart = time.Now()
 			// log.Printf("(%d) granted vote to %d", rf.me, args.CandidateId)
 		} else {
 			reply.VoteGranted = false
@@ -411,7 +389,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.SetCurrentTerm(args.Term)
 		rf.SetVotedFor(-1)
 		rf.SetServerState(Follower)
+		rf.mu.Lock()
 		rf.persist()
+		rf.mu.Unlock()
 		// log.Printf("becoming follower %d - received AE RPC from %d w term %d > %d", rf.me, args.LeaderId, args.Term, reply.Term)
 	}
 	if idx, ok := rf.MatchLogEntry(args.PrevLogIndex, args.PrevLogTerm); !ok {
@@ -444,6 +424,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// rf.log = append(rf.log, args.Entries[entryIdx:]...)
 	rf.persist()
 	rf.mu.Unlock()
+	// rf.persist()
 
 	rf.appendEntriesCh <- struct{}{}
 	reply.Success = true
@@ -525,7 +506,9 @@ func (rf *Raft) Candidate() {
 
 	rf.IncrementCurrentTerm()
 	rf.SetVotedFor(int32(rf.me))
+	rf.mu.Lock()
 	rf.persist()
+	rf.mu.Unlock()
 	votes := 1
 
 	// log.Printf("(%d) becoming candidate in term %d", rf.me, rf.GetCurrentTerm())
@@ -596,7 +579,9 @@ func (rf *Raft) Candidate() {
 				rf.SetServerState(Follower)
 				// log.Printf("becoming follower %d - during candidacy, %d had higher term %d > %d", rf.me, reply.Id, reply.Term, rf.GetCurrentTerm())
 				rf.SetCurrentTerm(reply.Term)
+				rf.mu.Lock()
 				rf.persist()
+				rf.mu.Unlock()
 				return
 			}
 
@@ -690,10 +675,8 @@ func (rf *Raft) ticker() {
 			case <-rf.voteGrantedCh:
 				// (Student Guide) reset timer if I grant a vote
 				// log.Printf("*************** (%d) time start: %v", rf.me, time.Now())
-				// rf.timestart = time.Now()
 				continue
 			case <-RandomTimeout(400, 600):
-				// log.Printf("*************** (%d) timed out: %v", rf.me, time.Since(rf.timestart))
 				// if the election timeout occurs, convert to candidate
 				rf.SetServerState(Candidate)
 			}
@@ -786,7 +769,9 @@ func (rf *Raft) ticker() {
 								rf.SetCurrentTerm(reply.Term)
 								rf.SetVotedFor(-1)
 								rf.SetServerState(Follower)
+								rf.mu.Lock()
 								rf.persist()
+								rf.mu.Unlock()
 								// log.Printf("becoming follower %d - encountered higher term from %d when AE RPC", rf.me, id)
 								return
 							}
