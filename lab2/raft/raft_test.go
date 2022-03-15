@@ -661,9 +661,11 @@ func TestPersist22C(t *testing.T) {
 
 	cfg.begin("Test (2C): more persistence")
 
+	// *Debug = true
 	index := 1
 	for iters := 0; iters < 5; iters++ {
 		cfg.one(10+index, servers, true)
+		DPrintf("first log")
 		index++
 
 		leader1 := cfg.checkOneLeader()
@@ -672,6 +674,7 @@ func TestPersist22C(t *testing.T) {
 		cfg.disconnect((leader1 + 2) % servers)
 
 		cfg.one(10+index, servers-2, true)
+		DPrintf("second log succeeds too")
 		index++
 
 		cfg.disconnect((leader1 + 0) % servers)
@@ -688,7 +691,12 @@ func TestPersist22C(t *testing.T) {
 		cfg.start1((leader1+3)%servers, cfg.applier)
 		cfg.connect((leader1 + 3) % servers)
 
+		DPrintf("pre third log")
+
 		cfg.one(10+index, servers-2, true)
+
+		DPrintf("third log")
+
 		index++
 
 		cfg.connect((leader1 + 4) % servers)
@@ -834,29 +842,48 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.one(rand.Int()%10000, 1, true)
 
+	// *Debug = true
+
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
+		DPrintf("iteration: %d", iters)
 		if iters == 200 {
+			DPrintf("************************************ DEEELLAAAAAYYYEDEDEDED delay response times")
 			cfg.setlongreordering(true)
 		}
 		leader := -1
 		for i := 0; i < servers; i++ {
-			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
+
+			_, term, ok := cfg.rafts[i].Start(rand.Int() % 10000)
+			str := fmt.Sprintf("(%d) ", term)
+			if cfg.connected[i] {
+				str = str + fmt.Sprintf("%d connected", i)
+			} else {
+				str = str + fmt.Sprintf("%d disconnected", i)
+			}
+			if ok {
+				str = str + fmt.Sprintf("    appended log")
+			}
 			if ok && cfg.connected[i] {
+				str = str + fmt.Sprintf("    is leader")
 				leader = i
 			}
+			DPrintf(str)
 		}
 
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
+			DPrintf("wait %v", time.Duration(ms)*time.Millisecond)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
 			ms := (rand.Int63() % 13)
+			DPrintf("wait %v", time.Duration(ms)*time.Millisecond)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
+			DPrintf("************************************ disconnect leader %d", leader)
 			nup -= 1
 		}
 
@@ -864,9 +891,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
 				cfg.connect(s)
+				DPrintf("************************************ reconnect peer %d", s)
 				nup += 1
 			}
 		}
+		DPrintf("************************************************************************")
 	}
 
 	for i := 0; i < servers; i++ {
@@ -874,6 +903,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.connect(i)
 		}
 	}
+	DPrintf("************************************ RECONNNEEECT everyone")
 
 	cfg.one(rand.Int()%10000, servers, true)
 
