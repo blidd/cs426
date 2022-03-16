@@ -456,14 +456,10 @@ func TestBackup2B(t *testing.T) {
 	}
 	cfg.disconnect(other)
 
-	// log.Printf("******** partitioned again: %d leader2, %d disconnected", leader2, other)
-
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
-
-	// log.Printf("******** more stuff that wont commit")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -471,19 +467,15 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 	}
-	// *Debug = true
 
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
-	// log.Printf("******** reconnect everybody")
-
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
-	// log.Printf("******** successfully committed a lot of new commands 2")
 
 	// now everyone
 	for i := 0; i < servers; i++ {
@@ -657,7 +649,6 @@ func TestPersist22C(t *testing.T) {
 
 	cfg.begin("Test (2C): more persistence")
 
-	// *Debug = true
 	index := 1
 	for iters := 0; iters < 5; iters++ {
 		cfg.one(10+index, servers, true)
@@ -837,8 +828,6 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
 	cfg.one(rand.Int()%10000, 1, true)
-
-	// *Debug = true
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {

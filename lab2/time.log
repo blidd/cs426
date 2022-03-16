@@ -19,9 +19,29 @@ Date  Started  Spent Work completed
 3/13   4:00pm  2:00  debugging Figure8Unreliable
 3/14   6:00pm  2:00  finished debugging
 3/15   1:00pm  1:00  fixing data race issues
+3/15   7:00pm  2:00  cleaning up, running test cases
 
                ----
-                :00  TOTAL time spent
+              36:00  TOTAL time spent
 
-I discussed my solution with:
+I discussed my solution with: Tony Xu, Seun Ominije
 
+What a journey. Implementing Raft was everything promised, maybe more.
+At the end of the day, the lab was a rewarding experience and really put
+my programming abilities to the test; definitely one of the most complex
+programs I have implemented solo in my young computer science career.
+
+The first major challenge was understanding at a deep level the nuances
+of the Raft algorithm. When I didn't fully understand something and wrote
+the code based on the wording of the spec and the student guide, I almost
+always ran into issues and bugs later on. An example would be with log
+matching and appending the right entries. 
+
+This was also a great lab for exercising my concurrent programming skills
+that I built up over the course of the fall in Operating Systems and in
+labs 0 and 1. Again, reasoning about interleaving was difficult without
+a strong understanding of the algorithm, and the reasoning behind the 
+instructions outlined in Figure 2 of the paper.
+
+All in all, I enjoyed doing this lab but am definitely glad it is behind
+me now. Time to enjoy the rest of my last semester at Yale :)
