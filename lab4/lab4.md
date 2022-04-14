@@ -83,7 +83,7 @@ Note that we list parts A (server), B (client), and C (shard migrations) in a sp
 order, but you are free to work on them in any order you see fit.
 
 **Important**: If you work as a group, include a section at the end of your `discussions.md` under the heading
-"Group work" which summarizes how each team member contributed to the completion of this lab.
+**Group work** which summarizes how each team member contributed to the completion of this lab.
 
 ## Setup
  1. Check out the repository like you did for previous labs lab 0, or pull to update: https://github.com/shixiao/cs426-spring2022-labs
@@ -93,6 +93,15 @@ order, but you are free to work on them in any order you see fit.
     * Additionally, you will need to install the Go plugins, following these steps: https://grpc.io/docs/languages/go/quickstart/
  3. This lab will be using Go, as with others. You will primarily be running tests in the `kv/test/` directory with `go test` (or `go test -v -run=TestClient` like in lab 0 and lab 1). You will not need extra tools like `kubectl` or `docker`.
 
+## Use of Go libraries
+
+You will likely not need any additional external libraries other than the ones
+already in use (gRPC, logrus, testify, etc). If you wish to use one, please
+post on Ed. We will not accept libraries which make substantial parts of
+the assignment trivial (for example, no pre-made thread-safe caches).
+
+If using an approved library, add it to your `go.mod` as usual, which you will
+submit as part of the assignment.
 
 # Background
 ## KV: The Key-Value API
@@ -194,7 +203,7 @@ implement a shard migration protocol in **Part C** to handle this without losing
 Your client implementation (`Kv` in `client.go`) will use this shard map to find which server to route to.
 For example, given a `Get("abc")` request, you will
  1. Compute the shard (by hashing `"abc"`)
- 2. Look up which nodes host that shard (by name), e.g. if "abc" maps to shard 3, this would be "n1" and "n2"
+ 2. Look up which nodes host that shard (by name), e.g. if "abc" maps to shard 3, this would be "n2" and "n3"
  3. Use the existing `ClientPool` to map the nodeName to a `KvClient` (which uses the address / port given)
  4. Use the `KvClient` to send a request to the server
 
@@ -222,6 +231,35 @@ hook in the test harness for testing clients and servers separately. When testin
 we use `TestClientPool` which removes networking overhead and allows us to inject
 responses and failures to aid in unit testing. You may use `TestClientPool` when
 implementing your own unit tests as well.
+
+## Logging with levels
+
+We've imported a leveled logging implementation ([Logrus](https://github.com/sirupsen/logrus))
+and used it in this project. It provides levels instead of just a single Printf/Print
+function, which can help filter severity of events. For example, you can log
+very bad things with `logrus.Errorf()` to be output at the ERROR level, or
+very unimportant things with `logrus.Debugf()` to be output at the DEBUG level.
+
+You can use the `-log-level=debug` flag to set the minimum log level for the messages
+to be output. By default this is `INFO` -- so only `logrus.Info()` or higher (meaning info, warn, error, or fatal/panic)
+are output.
+
+When writing your code you can sprinkle in `Debug()` or even `Trace()` (lowest level)
+statements which are not output by default, but can be turned on when you want
+to debug a test. For example, if a test fails you may run something like
+
+```
+go test -run=TestServerXyz -v -log-level=trace
+```
+
+You are free to use `logrus` with the existing flags or use the
+standard library `log` package (or just write to stderr directly if you really want to).
+We recommend adding log statements for edge cases as you go along to aid in debugging,
+but they are not required. Read more about Logrus (including structured logging
+with fields) in the [official docs](https://github.com/sirupsen/logrus).
+
+If using `logrus`, we also provide a flag `-log-file=path/to/file` which outputs
+to a file instead of `stderr`, for easier retrieval later.
 
 # Part A. Server implementation
 
@@ -363,7 +401,7 @@ of the shardmap, the client may be misconfigured, or the request was simply raci
 
 To start with this safety feature, you'll first need a sharding function. We recommend defining a function
 like `GetShardForKey(key string, numShards int) int` in `utils.go` that you can re-use across client
-and server implementation. We have provided a basic implementation that you can use if you want, but you can use 
+and server implementation. We have provided a basic implementation that you can use if you want, but you can use
 any hash function you want as long as it distributes well across
 the number of shards. (Recall from the [ShardMap background](#shardmap-handling-dynamic-sharding) section above that `NumShards` is a constant.)
 
@@ -436,7 +474,7 @@ expensive is it in terms of number of keys?
 
 If the server was write intensive, would you design it differently? How so?
 
-Note your responses under a heading A4 in your `discussions.md`.
+Note your responses under a heading **A4** in your `discussions.md`.
 
 # Part B. Client implementation
 
@@ -690,13 +728,107 @@ stress tests and benchmarks.
 
 # Part D. Stress testing your implementation
 
+## D1. Integration tests
 If you have completed all parts up until this point, you should pass all the provided
-tests in `kv/test/`, including all of the tests in `integration_test.go` (`go test -run=TestIntegration -v`; TBA in the next few days).
-These tests function without real networking: they mock out
-the client or the server, or wire them directly together without networking.
+tests in `kv/test/`, including all of the tests in `integration_test.go`. If you have not
+yet tried running the integration tests, run them now with `go test -run=TestIntegration -v`
+and debug any failures. Consider writing some additional unit tests if you have any failures
+to help debug.
 
-In this part, you will run a real cluster on your machine with several nodes and send
-RPCs to it with our stress tester.
+## D2. Stress test
 
-We will release the integration test and stress tester in the next few days. If you've gotten this far already, hang tight and consider
-working on your final project planning!
+All tests up to this point (including the integration tests) don't use real networking, they
+wire together instances of the server to the client directly. In this final section, you will
+run a cluster of many servers on the network and send it continuous traffic with our stress-test client.
+
+### Starting servers
+You can start an instance of the server by running the server CLI in `cmd/`:
+
+```
+go run cmd/server/server.go --shardmap $shardmap-file --node $nodename
+```
+
+We provide a few shardmaps for you, so you can try something like
+```
+go run cmd/server/server.go --shardmap shardmaps/single-node.json --node n1
+```
+which is a cluster of only one node.
+
+If you are on a Unix-like machine, we provide a small utility script to start a full
+cluster (assuming you have `jq`), essentially just running `go run cmd/server/server.go`
+all the nodes listed in a shardmap file.
+
+```
+scripts/run-cluster.sh shardmaps/test-3-node.json
+```
+
+### Simple testing
+If you've got a server (or cluster of servers) started, you can use the provided
+client CLI to sanity check before the stress test.
+
+To set a value:
+```
+go run cmd/client/client.go --shardmap $shardmap-file.json set my-key-name this-is-the-value 60000
+```
+To retrieve it back:
+```
+go run cmd/client/client.go --shardmap $shardmap-file.json get my-key-name
+```
+
+You must use the same shardmap file in all invocations of the client and server
+here to avoid misrouted requests.
+
+### Running the stress tester
+Once you've verified the server or servers have started, you can start the stress tester.
+The stress tester runs continuous Gets and Sets at a target amount of queries-per-second
+for a set duration. By default, this runs at 100 Get QPS and 30 Set QPS for one minute.
+
+Try running it now:
+```
+go run cmd/stress/tester.go --shardmap $shardmap-file.json
+```
+Similar to above, use the same shardmap file as the servers.
+
+At the end it should output a summary of how you did: number of requests, QPS, success rate,
+and correctness checks.
+
+The stress tester has documentation on how it works and how the correctness checker
+works inline in the comments, read those at the top of `cmd/stress/tester.go` if you
+are trying to figure out how it works or have issues.
+
+The stress tester also takes several flags to modify its behavior, you can try:
+ - `--get-qps` and `--set-qps` to change the workload patterns
+ - `--ttl` to change the TTL on keys set by the tester
+ - `--num-keys` to change the number of unique keys in the workload
+ - `--duration` to run for longer or shorter overall
+
+
+For example, you can reproduce a "hot key" workload by setting `--num-keys=1` and
+raising `--get-qps` (or `--set-qps` to make it a hot key on writes).
+
+
+### Discussion
+
+Run a few different experiments with different QPS levels, key levels, TTLs,
+or shard maps.
+
+Include at least 2 experiments in your `discussions.md` under heading **D2**.
+Provide the full command (with flags), the shard map (if it is not a provided one),
+what you were testing for, and any interesting results. If you find any bugs using
+the stress tester that were not caught in prior testing, you can note that
+as an interesting result.
+
+Consider running an experiment where you change the content of the shardmap
+file while the experiment is running: the provided shardmap watcher
+should update the servers (testing your shard migration logic) and
+the client automatically.
+
+### Stress tester expectations
+We will run your provided implementation with no more than 250 QPS (total) over
+the provided shard map sets. Your server implementation should be able to handle
+far more traffic though (likely thousands of QPS) on most hardware.
+
+We will not run the correctness checker and move shards in the same stress test;
+we do not define a complete correctness criteria for concurrent writes and shard
+movements (though this could be a part of your final project proposal, should
+you choose a stronger quorum protocol).
