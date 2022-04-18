@@ -1,0 +1,22 @@
+ESTIMATE of time to complete assignment: 10 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+3/31   8:00pm  2:00  reading spec, revisiting lab 1, going through docker docs
+ 4/1   5:00pm  1:00  create docker image
+ 4/3   7:00pm  2:00  reading Kubernetes docs and instructions, deployment, etc.
+ 4/4  11:00am  2:00  Kube loadgen, part C connection pooling
+ 4/9   5:00pm  3:00  wrap up connection pooling, clean up for submission
+               ----
+              10:00  TOTAL time spent
+
+I discussed my solution with: Tony Xu
+
+This problem set was quite straightforward. I had worked pretty extensively
+with Docker previously so Part A was not an issue for me. However I was 
+running into minor problems with my Kubernetes deployment that required some
+research to resolve. For Part C, I had thought about the issues around managing
+client connections so it wasn't a challenge for me to re-factor my code to
+allow connection pooling. The assignment is also overall very manageable
+relative to the previous one, no real complaints or major obstacles.

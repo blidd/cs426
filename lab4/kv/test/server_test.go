@@ -582,6 +582,8 @@ func TestServerSingleShardDropDataDeleted(t *testing.T) {
 		1: {},
 	})
 
+	fmt.Println("update 1")
+
 	_, _, err = setup.NodeGet("n1", "abc")
 	assertShardNotAssigned(t, err)
 
@@ -589,6 +591,7 @@ func TestServerSingleShardDropDataDeleted(t *testing.T) {
 	setup.UpdateShardMapping(map[int][]string{
 		1: {"n1"},
 	})
+	fmt.Println("update 2")
 
 	_, wasFound, err := setup.NodeGet("n1", "abc")
 	assert.Nil(t, err)

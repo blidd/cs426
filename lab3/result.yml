@@ -1,0 +1,31 @@
+apiVersion: cs426.cloud/v1
+kind: LoadgenResult
+metadata:
+  creationTimestamp: "2022-04-03T22:23:09Z"
+  generation: 1
+  managedFields:
+  - apiVersion: cs426.cloud/v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:spec:
+        .: {}
+        f:average_latency_ms: {}
+        f:duration_s: {}
+        f:error_msg: {}
+        f:errors: {}
+        f:requests: {}
+        f:stale_responses: {}
+    manager: unknown
+    operation: Update
+    time: "2022-04-03T22:23:09Z"
+  name: video-rec-loadgen-request
+  namespace: bl568
+  resourceVersion: "8892916"
+  uid: a0757640-d78d-42e5-8d40-e8df6a287c55
+spec:
+  average_latency_ms: 7016.2354
+  duration_s: 60
+  error_msg: ""
+  errors: 0
+  requests: 51
+  stale_responses: 0
