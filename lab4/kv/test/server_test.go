@@ -803,6 +803,8 @@ func TestServerRestartShardCopy(t *testing.T) {
 	setup.nodes["n2"].Shutdown()
 	setup.nodes["n2"] = kv.MakeKvServer("n2", setup.shardMap, &setup.clientPool)
 
+	fmt.Println("made new server")
+
 	// n2 should copy the data from n1 on restart
 	val, wasFound, err = setup.NodeGet("n2", "abc")
 	assert.Nil(t, err)
