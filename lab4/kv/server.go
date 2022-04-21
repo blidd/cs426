@@ -177,10 +177,13 @@ func (server *KvServerImpl) handleShardMapUpdate() {
 	}
 
 	for _, shard := range delSet {
-		server.cache[shard] = &ShardCache{
-			// mu:      &sync.RWMutex{},
-			storage: make(map[string]ShardState),
-		}
+		server.shardLocks[shard].Lock()
+		server.cache[shard].storage = make(map[string]ShardState)
+		server.shardLocks[shard].Unlock()
+		// server.cache[shard] = &ShardCache{
+		// 	// mu:      &sync.RWMutex{},
+		// 	storage: make(map[string]ShardState),
+		// }
 	}
 
 	for i := 1; i <= server.shardMap.NumShards(); i++ {
@@ -384,8 +387,8 @@ func (server *KvServerImpl) Delete(
 	// 	return nil, status.Error(codes.NotFound, "shard not in cache in server delete")
 	// }
 
-	server.shardLocks[shard].RLock()
-	defer server.shardLocks[shard].RUnlock()
+	server.shardLocks[shard].Lock()
+	defer server.shardLocks[shard].Unlock()
 	delete(server.cache[shard].storage, key)
 	return &proto.DeleteResponse{}, nil
 }

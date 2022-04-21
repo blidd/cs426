@@ -1,0 +1,24 @@
+ESTIMATE of time to complete assignment: 20 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+4/13   4:00pm  3:00  reading spec, beginning work on Part A (Brian)
+4/15   3:00pm  4:00  TTL strategy, work with Seun on sharding (Brian)
+4/16   2:00pm  2:00  debugging server test cases
+4/20   7:00pm  3:00  debugging server, integration tests (Brian)
+4/21  10:00am  2:00  wrap up discussions, stress testing
+
+               ----
+               -:00  TOTAL time spent
+
+I discussed my solution with: Brian Li, Tony Xu, Seun Ominije
+
+We enjoyed working on this lab. The topic was interesting and relevant 
+to readings and lecture discussions we have engaged with throughout the
+semester. Getting our hands dirty with a rudimentary implementation of
+a distributed cache reinforced many of the concepts concerning the 
+design and practical issues of sharding and storing data. A challenge 
+was coordinating our work and ultimately making sure everything lined
+up properly in the integration tests. This was excellent practice for
+our final project.
