@@ -193,7 +193,7 @@ func (server *KvServerImpl) shardMapListenLoop() {
 	for {
 		select {
 		case <-server.shutdown:
-			break
+			return
 		case <-listener:
 			server.handleShardMapUpdate()
 		}
